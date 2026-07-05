@@ -56,10 +56,28 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.debug.registerDebugConfigurationProvider('byond', {
 			async resolveDebugConfiguration(_folder, config) {
 				const baseTaskName = getBaseTaskName();
-				if (!baseTaskName || getSelected(context).length === 0) {
+				if (!baseTaskName || config.preLaunchTask !== baseTaskName) {
 					return config;
 				}
-				if (config.preLaunchTask !== baseTaskName) {
+				const mode = getInjectionMode();
+
+				if (mode === 'write-file') {
+					// Always write (even when nothing is selected) so a
+					// previous run's defines get cleared, not left stale.
+					writeLocalDefines(context);
+					const exitCode = await runTaskByName(baseTaskName);
+					if (exitCode === undefined) {
+						return config;
+					}
+					if (exitCode !== 0) {
+						return undefined;
+					}
+					config.preLaunchTask = undefined;
+					return config;
+				}
+
+				// cli-args mode
+				if (getSelected(context).length === 0) {
 					return config;
 				}
 				const tasks = await vscode.tasks.fetchTasks();
@@ -94,6 +112,26 @@ function getBaseTaskName(): string | undefined {
 	return vscode.workspace
 		.getConfiguration('tgBuildFlags')
 		.get<string>('baseTask');
+}
+
+function getInjectionMode(): 'cli-args' | 'write-file' {
+	return vscode.workspace
+		.getConfiguration('tgBuildFlags')
+		.get<'cli-args' | 'write-file'>('injectionMode', 'cli-args');
+}
+
+/** Finds baseTaskName via fetchTasks, runs it unmodified, and awaits its exit code. */
+async function runTaskByName(baseTaskName: string): Promise<number | undefined> {
+	const tasks = await vscode.tasks.fetchTasks();
+	const baseTask = tasks.find((t) => t.name === baseTaskName);
+	if (!baseTask) {
+		vscode.window.showWarningMessage(
+			`TG Build Flags: could not find task "${baseTaskName}"`,
+		);
+		return undefined;
+	}
+	const execution = await vscode.tasks.executeTask(baseTask);
+	return waitForTask(execution);
 }
 
 function cloneTaskWithFlags(
@@ -174,6 +212,17 @@ function flagsFilePath(): string | undefined {
 	return path.join(root, rel);
 }
 
+function localDefinesFilePath(): string | undefined {
+	const root = workspaceRoot();
+	const rel = vscode.workspace
+		.getConfiguration('tgBuildFlags')
+		.get<string>('localDefinesPath');
+	if (!root || !rel) {
+		return undefined;
+	}
+	return path.join(root, rel);
+}
+
 function loadFlags(): FlagsFile | undefined {
 	const file = flagsFilePath();
 	if (!file || !fs.existsSync(file)) {
@@ -202,6 +251,22 @@ function setSelected(context: vscode.ExtensionContext, ids: string[]) {
 		: ids.filter((id) => known.has(id));
 	context.workspaceState.update(STATE_KEY, cleaned);
 	updateStatusBar(context);
+}
+
+/** Overwrites localDefinesPath with #defines for the currently selected flags (write-file mode). */
+function writeLocalDefines(context: vscode.ExtensionContext): void {
+	const file = localDefinesFilePath();
+	if (!file) {
+		return;
+	}
+	const data = loadFlags();
+	const byId = new Map(data?.flags.map((f) => [f.id, f]) ?? []);
+	const defineLines = getSelected(context)
+		.map((id) => byId.get(id)?.define)
+		.filter((d): d is string => Boolean(d))
+		.map((d) => `#define ${d}`);
+
+	fs.writeFileSync(file, defineLines.length ? `${defineLines.join('\n')}\n` : '');
 }
 
 function currentDefines(context: vscode.ExtensionContext): string {
@@ -285,6 +350,7 @@ class BuildFlagsViewProvider implements vscode.WebviewViewProvider {
 			type: 'init',
 			data,
 			selected: getSelected(this.context),
+			mode: getInjectionMode(),
 		});
 	}
 }
@@ -384,12 +450,14 @@ const WEBVIEW_SCRIPT =  `
 const vscode = acquireVsCodeApi();
 let DATA = { flags: [], presets: [], categories: [] };
 let selected = new Set();
+let MODE = 'cli-args';
 
 window.addEventListener('message', (e) => {
 	const msg = e.data;
 	if (msg.type === 'init') {
 		DATA = msg.data;
 		selected = new Set(msg.selected || []);
+		MODE = msg.mode || 'cli-args';
 		renderPresets();
 		render();
 	}
@@ -476,7 +544,8 @@ function render() {
 			meta.className = 'meta';
 			const name = document.createElement('span');
 			name.className = 'name';
-			name.textContent = f.label + '  (-D' + f.define + ')';
+			const prefix = MODE === 'write-file' ? '#define ' : '-D';
+			name.textContent = f.label + '  (' + prefix + f.define + ')';
 			meta.appendChild(name);
 			if (f.description) {
 				const d = document.createElement('span');

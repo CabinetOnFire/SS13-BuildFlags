@@ -2,7 +2,7 @@
 	"name": "tgbuildflags",
 	"displayName": "TG Build Flags",
 	"description": "Plugin to select build/debug flags for your TG Repo.",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"publisher": "changemeporfavore",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -48,7 +48,22 @@
 				"tgBuildFlags.baseTask": {
 					"type": "string",
 					"default": null,
-					"markdownDescription": "Name of an existing task (from `tasks.json`) to clone with the selected `-D` flags appended. When set, F5 will run that task with flags injected instead of the config's original `preLaunchTask`."
+					"markdownDescription": "Name of an existing task (from `tasks.json`) to run with the selected flags injected. When set, F5 will run that task with flags injected instead of the config's original `preLaunchTask`."
+				},
+				"tgBuildFlags.injectionMode": {
+					"type": "string",
+					"enum": ["cli-args", "write-file"],
+					"default": "cli-args",
+					"markdownEnumDescriptions": [
+						"Clones `tgBuildFlags.baseTask` with `-D${define}` appended to its command/args (DreamMaker-style CLI defines).",
+						"Writes the selected `#define`s into `tgBuildFlags.localDefinesPath`, then runs `tgBuildFlags.baseTask` unmodified. Use this when the build system has no CLI define flag."
+					],
+					"markdownDescription": "How selected flags get injected into the build. See the enum descriptions for each mode."
+				},
+				"tgBuildFlags.localDefinesPath": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Workspace-relative path to a file the selected `#define`s are written into before the build task runs. Only used when `tgBuildFlags.injectionMode` is `write-file`. Only the extension's own marked block within this file is touched — any other hand-written content is preserved."
 				}
 			}
 		}
