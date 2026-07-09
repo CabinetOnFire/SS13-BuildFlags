@@ -75,7 +75,12 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('ss13BuildFlags.clear', () => {
 			setSelected(context, []);
 			setValues(context, {});
-			setEnabled(context, {});
+			const data = loadFlags();
+			const allDisabled: Record<string, boolean> = {};
+			for (const f of data?.flags.filter((f) => f.type === 'text') ?? []) {
+				allDisabled[f.id] = false;
+			}
+			setEnabled(context, allDisabled);
 			provider.refresh();
 		}),
 		vscode.debug.registerDebugConfigurationProvider('byond', {
@@ -920,6 +925,11 @@ document.getElementById('clear').addEventListener('click', () => {
 	selected = new Set();
 	values = {};
 	enabled = {};
+	for (const f of DATA.flags) {
+		if (f.type === 'text') {
+			enabled[f.id] = false;
+		}
+	}
 	render();
 	save();
 });
